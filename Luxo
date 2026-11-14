@@ -1,0 +1,815 @@
+/**
+ * Lampa Luxo UI Plugin
+ * Version: 1.0.0
+ * Description: Современная премиальная интерфейсная модификация для медиаплатформы Lampa.
+ * Target: Smart TV (Tizen, webOS), Android TV, Desktop/Mobile WebView (ES5 Compatible)
+ */
+(function () {
+    'use strict';
+
+    // =========================================================================
+    // 1. ЗАЩИТА ОТ ПОВТОРНОЙ ИНИЦИАЛИЗАЦИИ И БАЗОВАЯ КОНФИГУРАЦИЯ
+    // =========================================================================
+    if (window.luxo_plugin_loaded) {
+        return;
+    }
+    window.luxo_plugin_loaded = true;
+
+    var PLUGIN_META = {
+        id: 'luxo_settings',
+        name: 'Luxo UI',
+        version: '1.0.0',
+        styleId: 'luxo-core-styles',
+        dynamicStyleId: 'luxo-dynamic-vars'
+    };
+
+    // Конфигурация настроек по умолчанию
+    var DEFAULTS = {
+        luxo_enabled: true,
+        luxo_accent: '#E50914',
+        luxo_radius: '12',
+        luxo_animation: true,
+        luxo_scale: '1.06',
+        luxo_header_opacity: '0.85',
+        luxo_shadows: true
+    };
+
+    // Иконка раздела настроек (SVG в формате, совместимом с Lampa SettingsApi)
+    var LUXO_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+
+    // =========================================================================
+    // 2. ДИАГНОСТИЧЕСКИЙ ЛОГГЕР И УТИЛИТЫ
+    // =========================================================================
+    function logInfo(message, data) {
+        if (window.console && typeof window.console.log === 'function') {
+            if (typeof data !== 'undefined') {
+                window.console.log('[Luxo UI v' + PLUGIN_META.version + '] ' + message, data);
+            } else {
+                window.console.log('[Luxo UI v' + PLUGIN_META.version + '] ' + message);
+            }
+        }
+    }
+
+    function logError(message, error) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[Luxo UI Error] ' + message, error || '');
+        }
+    }
+
+    /**
+     * Преобразование HEX-цвета в строку "R, G, B" для использования в rgba()
+     */
+    function hexToRgbString(hex) {
+        var cleanHex = String(hex || '#E50914').replace('#', '');
+        if (cleanHex.length === 3) {
+            cleanHex = cleanHex[0] + cleanHex[0] + cleanHex[1] + cleanHex[1] + cleanHex[2] + cleanHex[2];
+        }
+        var num = parseInt(cleanHex, 16);
+        if (isNaN(num)) {
+            return '229, 9, 20';
+        }
+        var r = (num >> 16) & 255;
+        var g = (num >> 8) & 255;
+        var b = num & 255;
+        return r + ', ' + g + ', ' + b;
+    }
+
+    /**
+     * Безопасное чтение настройки из Lampa.Storage
+     */
+    function getSetting(key) {
+        try {
+            if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.get === 'function') {
+                var val = Lampa.Storage.get(key, DEFAULTS[key]);
+                // Приведение типов для булевых значений (в Lampa.Storage триггеры могут храниться как строки 'true'/'false' или boolean)
+                if (typeof DEFAULTS[key] === 'boolean') {
+                    if (val === 'true' || val === true) return true;
+                    if (val === 'false' || val === false) return false;
+                    return DEFAULTS[key];
+                }
+                return String(val);
+            }
+        } catch (e) {
+            logError('Ошибка чтения настройки ' + key, e);
+        }
+        return DEFAULTS[key];
+    }
+
+    /**
+     * Инициализация дефолтных значений в Lampa.Storage при первом запуске
+     */
+    function ensureDefaults() {
+        try {
+            if (!window.Lampa || !Lampa.Storage) return;
+            for (var key in DEFAULTS) {
+                if (Object.prototype.hasOwnProperty.call(DEFAULTS, key)) {
+                    var current = Lampa.Storage.get(key, null);
+                    if (current === null || typeof current === 'undefined' || current === '') {
+                        Lampa.Storage.set(key, DEFAULTS[key]);
+                    }
+                }
+            }
+        } catch (e) {
+            logError('Ошибка записи начальных настроек', e);
+        }
+    }
+
+    // =========================================================================
+    // 3. ГЕНЕРАЦИЯ И ИНЪЕКЦИЯ CSS-СТИЛЕЙ (ВСЕ СЕЛЕКТОРЫ С ПРЕФИКСОМ .luxo-*)
+    // =========================================================================
+    function buildCoreCSS() {
+        return [
+            '/* === LUXO UI CORE STYLES === */',
+            'body.luxo-enabled {',
+            '    background-color: var(--luxo-bg-main, #090909) !important;',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '}',
+            '',
+            '/* Фоновая подложка Lampa */',
+            'body.luxo-enabled .background {',
+            '    background-color: var(--luxo-bg-main, #090909) !important;',
+            '}',
+            'body.luxo-enabled .background__one,',
+            'body.luxo-enabled .background__two {',
+            '    opacity: 0.22 !important;',
+            '    transition: opacity 0.5s ease;',
+            '}',
+            '',
+            '/* === ВЕРХНЯЯ ПАНЕЛЬ НАВИГАЦИИ (.head) === */',
+            'body.luxo-enabled .head {',
+            '    background-color: rgba(17, 17, 17, var(--luxo-header-alpha, 0.85)) !important;',
+            '    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;',
+            '    padding-top: 0.4em !important;',
+            '    padding-bottom: 0.4em !important;',
+            '    transition: background-color 0.25s ease;',
+            '}',
+            'body.luxo-enabled .head__body {',
+            '    align-items: center !important;',
+            '}',
+            'body.luxo-enabled .head__logo-icon,',
+            'body.luxo-enabled .head__title {',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '    font-weight: 700 !important;',
+            '    letter-spacing: 0.02em !important;',
+            '}',
+            'body.luxo-enabled .head__action {',
+            '    background-color: rgba(255, 255, 255, 0.05) !important;',
+            '    border-radius: 50% !important;',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '    transition: transform var(--luxo-anim-speed, 0.22s) ease, background-color var(--luxo-anim-speed, 0.22s) ease, color var(--luxo-anim-speed, 0.22s) ease, box-shadow var(--luxo-anim-speed, 0.22s) ease !important;',
+            '}',
+            'body.luxo-enabled .head__action.focus,',
+            'body.luxo-enabled .head__action.hover {',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '    transform: scale(1.08) !important;',
+            '    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2), 0 4px 14px rgba(var(--luxo-accent-rgb, 229, 9, 20), 0.45) !important;',
+            '}',
+            'body.luxo-enabled .head__time {',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '    font-weight: 500 !important;',
+            '}',
+            '',
+            '/* === БОКОВОЕ МЕНЮ (.menu) === */',
+            'body.luxo-enabled .menu {',
+            '    background-color: var(--luxo-bg-sec, #111111) !important;',
+            '    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;',
+            '}',
+            'body.luxo-enabled .menu__item {',
+            '    border-radius: 0.65em !important;',
+            '    margin: 0.18em 0.5em !important;',
+            '    padding-left: 0.9em !important;',
+            '    padding-right: 0.9em !important;',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '    transition: background-color var(--luxo-anim-speed, 0.22s) ease, color var(--luxo-anim-speed, 0.22s) ease, transform var(--luxo-anim-speed, 0.22s) ease !important;',
+            '}',
+            'body.luxo-enabled .menu__item .menu__text {',
+            '    color: inherit !important;',
+            '    font-weight: 500 !important;',
+            '}',
+            'body.luxo-enabled .menu__item .menu__ico svg,',
+            'body.luxo-enabled .menu__item .menu__ico path {',
+            '    color: inherit !important;',
+            '}',
+            'body.luxo-enabled .menu__item.focus,',
+            'body.luxo-enabled .menu__item.traverse,',
+            'body.luxo-enabled .menu__item.hover {',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '    box-shadow: 0 4px 14px rgba(var(--luxo-accent-rgb, 229, 9, 20), 0.35) !important;',
+            '}',
+            '',
+            '/* === ГЛАВНЫЙ ЭКРАН: СТРОКИ И КАТЕГОРИИ (.items-line) === */',
+            'body.luxo-enabled .items-line__head {',
+            '    margin-bottom: 0.7em !important;',
+            '    align-items: center !important;',
+            '}',
+            'body.luxo-enabled .items-line__title {',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '    font-weight: 700 !important;',
+            '    font-size: 1.45em !important;',
+            '    letter-spacing: 0.01em !important;',
+            '    position: relative !important;',
+            '    padding-left: 0.55em !important;',
+            '}',
+            'body.luxo-enabled .items-line__title::before {',
+            '    content: "" !important;',
+            '    position: absolute !important;',
+            '    left: 0 !important;',
+            '    top: 15% !important;',
+            '    bottom: 15% !important;',
+            '    width: 3px !important;',
+            '    border-radius: 2px !important;',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '}',
+            'body.luxo-enabled .items-line__more {',
+            '    background-color: var(--luxo-surface, #181818) !important;',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '    border-radius: 0.5em !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.08) !important;',
+            '    transition: background-color var(--luxo-anim-speed, 0.22s) ease, color var(--luxo-anim-speed, 0.22s) ease !important;',
+            '}',
+            'body.luxo-enabled .items-line__more.focus {',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '    border-color: transparent !important;',
+            '}',
+            '',
+            '/* === КАРТОЧКИ ФИЛЬМОВ И СЕРИАЛОВ (.card) === */',
+            'body.luxo-enabled .card {',
+            '    transition: transform var(--luxo-anim-speed, 0.22s) cubic-bezier(0.22, 1, 0.36, 1), z-index 0s !important;',
+            '    will-change: transform;',
+            '}',
+            'body.luxo-enabled .card__view {',
+            '    background-color: var(--luxo-surface, #181818) !important;',
+            '    border-radius: var(--luxo-card-radius, 12px) !important;',
+            '    overflow: hidden !important;',
+            '    position: relative !important;',
+            '    box-shadow: var(--luxo-card-shadow, 0 6px 18px rgba(0, 0, 0, 0.55)) !important;',
+            '    transition: box-shadow var(--luxo-anim-speed, 0.22s) ease, border-color var(--luxo-anim-speed, 0.22s) ease !important;',
+            '    border: 2px solid transparent !important;',
+            '}',
+            '/* Убираем стандартную рамку псевдоэлемента Lampa, чтобы не было двойного контура */',
+            'body.luxo-enabled .card.focus .card__view::after,',
+            'body.luxo-enabled .card.hover .card__view::after {',
+            '    display: none !important;',
+            '    opacity: 0 !important;',
+            '}',
+            'body.luxo-enabled .card__img {',
+            '    border-radius: var(--luxo-card-radius, 12px) !important;',
+            '    background-color: var(--luxo-surface, #181818) !important;',
+            '}',
+            '/* Состояние фокуса карточки с пульта ТВ */',
+            'body.luxo-enabled .card.focus,',
+            'body.luxo-enabled .card.hover {',
+            '    transform: scale(var(--luxo-card-scale, 1.06)) !important;',
+            '    z-index: 12 !important;',
+            '}',
+            'body.luxo-enabled .card.focus .card__view,',
+            'body.luxo-enabled .card.hover .card__view {',
+            '    border-color: var(--luxo-accent, #E50914) !important;',
+            '    box-shadow: var(--luxo-card-focus-shadow, 0 12px 28px rgba(0, 0, 0, 0.8), 0 0 16px rgba(var(--luxo-accent-rgb, 229, 9, 20), 0.45)) !important;',
+            '}',
+            '/* Название и год под карточкой */',
+            'body.luxo-enabled .card__title {',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '    font-weight: 500 !important;',
+            '    margin-top: 0.45em !important;',
+            '    line-height: 1.25 !important;',
+            '    transition: color var(--luxo-anim-speed, 0.22s) ease !important;',
+            '}',
+            'body.luxo-enabled .card.focus .card__title,',
+            'body.luxo-enabled .card.hover .card__title {',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '}',
+            'body.luxo-enabled .card__age {',
+            '    color: #777777 !important;',
+            '    font-size: 0.85em !important;',
+            '}',
+            '/* Бейджи рейтинга, качества и типа контента на карточке */',
+            'body.luxo-enabled .card__vote {',
+            '    background-color: rgba(9, 9, 9, 0.88) !important;',
+            '    color: #FFFFFF !important;',
+            '    font-weight: 700 !important;',
+            '    border-radius: 0.4em !important;',
+            '    padding: 0.2em 0.45em !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.14) !important;',
+            '}',
+            'body.luxo-enabled .card__type {',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '    font-weight: 700 !important;',
+            '    border-radius: 0.35em !important;',
+            '}',
+            'body.luxo-enabled .card__quality {',
+            '    background-color: rgba(17, 17, 17, 0.9) !important;',
+            '    color: #FFFFFF !important;',
+            '    border-radius: 0.35em !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.15) !important;',
+            '    font-weight: 600 !important;',
+            '}',
+            '',
+            '/* === СТРАНИЦА ФИЛЬМА (.full-start / .full-start-new / .full-descr) === */',
+            'body.luxo-enabled .full-start__poster,',
+            'body.luxo-enabled .full-start-new__poster {',
+            '    border-radius: var(--luxo-card-radius, 12px) !important;',
+            '    overflow: hidden !important;',
+            '    box-shadow: var(--luxo-card-shadow, 0 10px 30px rgba(0, 0, 0, 0.7)) !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.08) !important;',
+            '}',
+            'body.luxo-enabled .full-start__img,',
+            'body.luxo-enabled .full-start-new__img {',
+            '    border-radius: var(--luxo-card-radius, 12px) !important;',
+            '}',
+            'body.luxo-enabled .full-start__title,',
+            'body.luxo-enabled .full-start-new__title {',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '    font-weight: 800 !important;',
+            '    letter-spacing: -0.01em !important;',
+            '    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.75) !important;',
+            '}',
+            'body.luxo-enabled .full-start__title-original,',
+            'body.luxo-enabled .full-start-new__tagline {',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '    font-weight: 500 !important;',
+            '}',
+            '/* Кнопки действий на странице фильма */',
+            'body.luxo-enabled .full-start__button {',
+            '    background-color: rgba(24, 24, 24, 0.88) !important;',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '    border-radius: 0.65em !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.1) !important;',
+            '    transition: transform var(--luxo-anim-speed, 0.22s) ease, background-color var(--luxo-anim-speed, 0.22s) ease, box-shadow var(--luxo-anim-speed, 0.22s) ease, border-color var(--luxo-anim-speed, 0.22s) ease !important;',
+            '}',
+            'body.luxo-enabled .full-start__button.focus {',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '    border-color: transparent !important;',
+            '    transform: scale(1.05) !important;',
+            '    box-shadow: 0 6px 20px rgba(var(--luxo-accent-rgb, 229, 9, 20), 0.45) !important;',
+            '}',
+            '/* Рейтинги и теги на странице фильма */',
+            'body.luxo-enabled .full-start__rate,',
+            'body.luxo-enabled .full-start-new__rate-line .full-start__rate {',
+            '    background-color: var(--luxo-surface, #181818) !important;',
+            '    border-radius: 0.45em !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.1) !important;',
+            '    overflow: hidden !important;',
+            '}',
+            'body.luxo-enabled .full-start__rate > div:first-child {',
+            '    background-color: var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '    font-weight: 700 !important;',
+            '}',
+            'body.luxo-enabled .full-start__pg,',
+            'body.luxo-enabled .full-start__status {',
+            '    background-color: rgba(24, 24, 24, 0.85) !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.15) !important;',
+            '    border-radius: 0.4em !important;',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '}',
+            '/* Описание и блок деталей */',
+            'body.luxo-enabled .full-descr__text {',
+            '    color: #E0E0E0 !important;',
+            '    line-height: 1.55 !important;',
+            '    font-size: 1.05em !important;',
+            '    max-width: 68em !important;',
+            '}',
+            'body.luxo-enabled .full-descr__details {',
+            '    background-color: rgba(24, 24, 24, 0.65) !important;',
+            '    border-radius: var(--luxo-card-radius, 12px) !important;',
+            '    padding: 1em 1.2em !important;',
+            '    border: 1px solid rgba(255, 255, 255, 0.06) !important;',
+            '}',
+            'body.luxo-enabled .full-descr__info-name {',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '}',
+            'body.luxo-enabled .full-descr__info-body {',
+            '    color: var(--luxo-text-main, #FFFFFF) !important;',
+            '    font-weight: 500 !important;',
+            '}',
+            '',
+            '/* === МЕНЮ НАСТРОЕК И ВЫПАДАЮЩИЕ СПИСКИ (.settings / .selectbox) === */',
+            'body.luxo-enabled .settings__content,',
+            'body.luxo-enabled .selectbox__content {',
+            '    background-color: var(--luxo-bg-sec, #111111) !important;',
+            '    border-left: 1px solid rgba(255, 255, 255, 0.08) !important;',
+            '}',
+            'body.luxo-enabled .settings-folder,',
+            'body.luxo-enabled .settings-param,',
+            'body.luxo-enabled .selectbox-item {',
+            '    border-radius: 0.6em !important;',
+            '    margin-bottom: 0.2em !important;',
+            '    transition: background-color var(--luxo-anim-speed, 0.22s) ease, color var(--luxo-anim-speed, 0.22s) ease !important;',
+            '}',
+            'body.luxo-enabled .settings-folder.focus,',
+            'body.luxo-enabled .settings-param.focus,',
+            'body.luxo-enabled .selectbox-item.focus {',
+            '    background-color: var(--luxo-surface, #181818) !important;',
+            '    box-shadow: inset 4px 0 0 0 var(--luxo-accent, #E50914) !important;',
+            '    color: #FFFFFF !important;',
+            '}',
+            'body.luxo-enabled .settings-param__descr {',
+            '    color: var(--luxo-text-sub, #A0A0A0) !important;',
+            '}',
+            'body.luxo-enabled .settings-param__status {',
+            '    border-radius: 0.35em !important;',
+            '}'
+        ].join('\n');
+    }
+
+    /**
+     * Внедрение базовой таблицы стилей в <head> (без дублирования)
+     */
+    function injectCoreStyles() {
+        try {
+            if (document.getElementById(PLUGIN_META.styleId)) {
+                return;
+            }
+            var style = document.createElement('style');
+            style.id = PLUGIN_META.styleId;
+            style.type = 'text/css';
+            style.innerHTML = buildCoreCSS();
+            var head = document.head || document.getElementsByTagName('head')[0];
+            if (head) {
+                head.appendChild(style);
+            }
+        } catch (e) {
+            logError('Не удалось внедрить базовый CSS', e);
+        }
+    }
+
+    /**
+     * Применение динамических CSS-переменных на основе текущих настроек пользователя
+     */
+    function applyDynamicSettings() {
+        try {
+            var enabled = getSetting('luxo_enabled');
+            var accent = getSetting('luxo_accent');
+            var radius = getSetting('luxo_radius');
+            var animation = getSetting('luxo_animation');
+            var scale = getSetting('luxo_scale');
+            var headerOpacity = getSetting('luxo_header_opacity');
+            var shadows = getSetting('luxo_shadows');
+
+            var body = document.body;
+            if (!body) return;
+
+            // Включение или полное отключение модификации Luxo без удаления плагина
+            if (enabled) {
+                if (body.className.indexOf('luxo-enabled') === -1) {
+                    body.className = (body.className + ' luxo-enabled').replace(/^\s+|\s+$/g, '');
+                }
+            } else {
+                body.className = body.className.replace(/\bluxo-enabled\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+                return;
+            }
+
+            var rgbAccent = hexToRgbString(accent);
+            var animSpeed = animation ? '0.22s' : '0s';
+            var cardShadow = shadows ? '0 6px 18px rgba(0, 0, 0, 0.55)' : 'none';
+            var cardFocusShadow = shadows
+                ? '0 12px 28px rgba(0, 0, 0, 0.8), 0 0 16px rgba(' + rgbAccent + ', 0.45)'
+                : '0 0 0 2px ' + accent;
+
+            var dynamicCSS = [
+                ':root {',
+                '    --luxo-bg-main: #090909;',
+                '    --luxo-bg-sec: #111111;',
+                '    --luxo-surface: #181818;',
+                '    --luxo-text-main: #FFFFFF;',
+                '    --luxo-text-sub: #A0A0A0;',
+                '    --luxo-accent: ' + accent + ';',
+                '    --luxo-accent-rgb: ' + rgbAccent + ';',
+                '    --luxo-card-radius: ' + radius + 'px;',
+                '    --luxo-anim-speed: ' + animSpeed + ';',
+                '    --luxo-card-scale: ' + scale + ';',
+                '    --luxo-header-alpha: ' + headerOpacity + ';',
+                '    --luxo-card-shadow: ' + cardShadow + ';',
+                '    --luxo-card-focus-shadow: ' + cardFocusShadow + ';',
+                '}'
+            ].join('\n');
+
+            var dynStyle = document.getElementById(PLUGIN_META.dynamicStyleId);
+            if (!dynStyle) {
+                dynStyle = document.createElement('style');
+                dynStyle.id = PLUGIN_META.dynamicStyleId;
+                dynStyle.type = 'text/css';
+                var head = document.head || document.getElementsByTagName('head')[0];
+                if (head) {
+                    head.appendChild(dynStyle);
+                }
+            }
+            dynStyle.innerHTML = dynamicCSS;
+        } catch (e) {
+            logError('Ошибка применения динамических настроек Luxo', e);
+        }
+    }
+
+    // =========================================================================
+    // 4. РЕГИСТРАЦИЯ РАЗДЕЛА НАСТРОЕК В LAMPA.SETTINGSAPI
+    // =========================================================================
+    function registerSettings() {
+        if (!window.Lampa || !Lampa.SettingsApi || typeof Lampa.SettingsApi.addComponent !== 'function') {
+            logError('Lampa.SettingsApi недоступен в данной сборке.');
+            return;
+        }
+
+        try {
+            // 1. Создание компонента настроек Luxo
+            Lampa.SettingsApi.addComponent({
+                component: PLUGIN_META.id,
+                name: PLUGIN_META.name,
+                icon: LUXO_ICON
+            });
+
+            // Заголовок секции
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    type: 'title'
+                },
+                field: {
+                    name: 'Основные параметры оформления Luxo'
+                }
+            });
+
+            // Настройка 1: Включение и отключение Luxo
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_enabled',
+                    type: 'trigger',
+                    default: DEFAULTS.luxo_enabled
+                },
+                field: {
+                    name: 'Оформление Luxo',
+                    description: 'Включить или полностью отключить визуальный стиль Luxo без удаления плагина'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 2: Выбор акцентного цвета
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_accent',
+                    type: 'select',
+                    values: {
+                        '#E50914': 'Netflix Red (#E50914)',
+                        '#0A84FF': 'Apple TV Blue (#0A84FF)',
+                        '#10B981': 'Emerald Green (#10B981)',
+                        '#F59E0B': 'Amber Gold (#F59E0B)',
+                        '#8B5CF6': 'Royal Violet (#8B5CF6)',
+                        '#E11D48': 'Crimson Rose (#E11D48)'
+                    },
+                    default: DEFAULTS.luxo_accent
+                },
+                field: {
+                    name: 'Акцентный цвет',
+                    description: 'Основной цвет выделения карточек в фокусе, активных кнопок и индикаторов'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 3: Скругление карточек
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_radius',
+                    type: 'select',
+                    values: {
+                        '0': 'Без скругления (0px)',
+                        '6': 'Малое (6px)',
+                        '12': 'Стандартное Luxo (12px)',
+                        '16': 'Крупное (16px)',
+                        '22': 'Максимальное (22px)'
+                    },
+                    default: DEFAULTS.luxo_radius
+                },
+                field: {
+                    name: 'Скругление карточек',
+                    description: 'Радиус скругления углов постеров и информационных блоков'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 4: Анимация карточек
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_animation',
+                    type: 'trigger',
+                    default: DEFAULTS.luxo_animation
+                },
+                field: {
+                    name: 'Плавная анимация интерфейса',
+                    description: 'Плавные переходы при перемещении фокуса с пульта (отключите на слабых ТВ)'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 5: Масштаб увеличения карточек при фокусе
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_scale',
+                    type: 'select',
+                    values: {
+                        '1.00': 'Без увеличения (100%)',
+                        '1.03': 'Мягкое (103%)',
+                        '1.06': 'Стандартное Luxo (106%)',
+                        '1.09': 'Выразительное (109%)'
+                    },
+                    default: DEFAULTS.luxo_scale
+                },
+                field: {
+                    name: 'Масштаб карточек при фокусе',
+                    description: 'Степень увеличения карточки фильма при наведении курсора пульта'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 6: Прозрачность верхней панели
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_header_opacity',
+                    type: 'select',
+                    values: {
+                        '1': 'Непрозрачная (100%)',
+                        '0.92': 'Слегка прозрачная (92%)',
+                        '0.85': 'Стандартная Luxo (85%)',
+                        '0.70': 'Полупрозрачная (70%)',
+                        '0.50': 'Максимально прозрачная (50%)'
+                    },
+                    default: DEFAULTS.luxo_header_opacity
+                },
+                field: {
+                    name: 'Прозрачность верхней панели',
+                    description: 'Уровень непрозрачности фона шапки навигации'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 7: Включение и отключение теней
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_shadows',
+                    type: 'trigger',
+                    default: DEFAULTS.luxo_shadows
+                },
+                field: {
+                    name: 'Объёмные тени карточек',
+                    description: 'Отображать мягкие тени и свечение вокруг активной карточки'
+                },
+                onChange: function () {
+                    applyDynamicSettings();
+                }
+            });
+
+            // Настройка 8: Сброс настроек Luxo
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_META.id,
+                param: {
+                    name: 'luxo_reset_btn',
+                    type: 'button'
+                },
+                field: {
+                    name: 'Сбросить настройки Luxo',
+                    description: 'Восстановить стандартные параметры оформления Luxo по умолчанию'
+                },
+                onChange: function () {
+                    resetLuxoSettings();
+                }
+            });
+
+            logInfo('Настройки успешно зарегистрированы в Lampa.SettingsApi.');
+        } catch (e) {
+            logError('Ошибка при регистрации настроек в SettingsApi', e);
+        }
+    }
+
+    /**
+     * Сброс всех параметров Luxo к значениям по умолчанию
+     */
+    function resetLuxoSettings() {
+        try {
+            if (!window.Lampa || !Lampa.Storage) return;
+
+            for (var key in DEFAULTS) {
+                if (Object.prototype.hasOwnProperty.call(DEFAULTS, key)) {
+                    Lampa.Storage.set(key, DEFAULTS[key]);
+                }
+            }
+
+            applyDynamicSettings();
+
+            if (Lampa.Noty && typeof Lampa.Noty.show === 'function') {
+                Lampa.Noty.show('Luxo: Настройки восстановлены по умолчанию');
+            }
+
+            // Обновление открытого окна настроек, чтобы отобразить сброшенные значения
+            if (Lampa.Settings && typeof Lampa.Settings.update === 'function') {
+                Lampa.Settings.update();
+            }
+        } catch (e) {
+            logError('Ошибка при сбросе настроек Luxo', e);
+        }
+    }
+
+    // =========================================================================
+    // 5. ПОДПИСКА НА СОБЫТИЯ LAMPA (STORAGE И ACTIVITY)
+    // =========================================================================
+    function bindEvents() {
+        try {
+            // Реакция на изменение любых ключей luxo_* в Storage
+            if (Lampa.Storage && Lampa.Storage.listener && typeof Lampa.Storage.listener.follow === 'function') {
+                Lampa.Storage.listener.follow('change', function (e) {
+                    if (e && e.name && String(e.name).indexOf('luxo_') === 0) {
+                        applyDynamicSettings();
+                    }
+                });
+            }
+
+            // При смене экранов (activity) гарантируем, что класс .luxo-enabled на body сохраняется
+            if (Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
+                Lampa.Listener.follow('activity', function (e) {
+                    if (e && e.type === 'start') {
+                        applyDynamicSettings();
+                    }
+                });
+            }
+        } catch (e) {
+            logError('Ошибка при привязке обработчиков событий Lampa', e);
+        }
+    }
+
+    // =========================================================================
+    // 6. ГЛАВНАЯ ТОЧКА ВХОДА И ЗАПУСК ПЛАГИНА
+    // =========================================================================
+    function initLuxoPlugin() {
+        if (!window.Lampa) {
+            logError('Объект window.Lampa не найден. Инициализация отменена.');
+            return;
+        }
+
+        try {
+            logInfo('Запуск инициализации плагина...');
+            ensureDefaults();
+            injectCoreStyles();
+            applyDynamicSettings();
+            registerSettings();
+            bindEvents();
+            logInfo('Плагин Luxo успешно инициализирован.');
+        } catch (e) {
+            logError('Критическая ошибка при инициализации плагина Luxo', e);
+        }
+    }
+
+    // Ожидание полной готовности приложения Lampa
+    if (window.appready) {
+        initLuxoPlugin();
+    } else if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
+        Lampa.Listener.follow('app', function (e) {
+            if (e && e.type === 'ready') {
+                initLuxoPlugin();
+            }
+        });
+    } else {
+        // Резервный механизм ожидания, если скрипт подключён до инициализации объекта Lampa
+        var checkAttempts = 0;
+        var waitTimer = setInterval(function () {
+            checkAttempts++;
+            if (window.Lampa && window.appready) {
+                clearInterval(waitTimer);
+                initLuxoPlugin();
+            } else if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
+                clearInterval(waitTimer);
+                Lampa.Listener.follow('app', function (e) {
+                    if (e && e.type === 'ready') {
+                        initLuxoPlugin();
+                    }
+                });
+            } else if (checkAttempts > 50) {
+                clearInterval(waitTimer);
+                logError('Превышено время ожидания загрузки Lampa.');
+            }
+        }, 200);
+    }
+})();
