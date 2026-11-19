@@ -961,35 +961,12 @@
                         if (pUrl && !discoveredPlugins[matchedProfile.id].url) discoveredPlugins[matchedProfile.id].url = pUrl;
                         if (pIcon && !discoveredPlugins[matchedProfile.id].nativeIcon) discoveredPlugins[matchedProfile.id].nativeIcon = pIcon;
                     }
-                } else {
-                    var dynId = makeSafeId(pName || extractPluginLabel(pUrl));
-                    if (!discoveredPlugins[dynId]) {
-                        discoveredPlugins[dynId] = {
-                            id: dynId,
-                            name: pName || extractPluginLabel(pUrl),
-                            url: pUrl,
-                            nativeIcon: pIcon,
-                            adapterType: 'lampac_or_native',
-                            buttonHints: [dynId, (pName || '').toLowerCase()],
-                            detectedVia: 'Установленный плагин'
-                        };
-                    }
                 }
+                // Неизвестные расширения намеренно не добавляем:
+                // каталог ANDRPROD содержит только подтверждённые онлайн-плагины.
             }
 
-            try {
-                if (Lampa.Storage.get('parser_use', false) && !discoveredPlugins['torrents']) {
-                    discoveredPlugins['torrents'] = {
-                        id: 'torrents',
-                        name: 'Торренты (TorrServer)',
-                        url: '',
-                        nativeIcon: '',
-                        adapterType: 'builtin_torrents',
-                        buttonHints: ['view--torrent', 'торрент', 'torrent'],
-                        detectedVia: 'Встроенный модуль Lampa'
-                    };
-                }
-            } catch (e3) {}
+            // Встроенный TorrServer не добавляется как сторонний онлайн-плагин.
 
             var oldPid;
             for (oldPid in self.plugins) {
@@ -2155,7 +2132,9 @@
                 if (lowerLabel.indexOf('трейлер') !== -1 || lowerLabel.indexOf('trailer') !== -1 || lowerLabel.indexOf('закладк') !== -1 || lowerLabel.indexOf('подпис') !== -1) {
                     return;
                 }
-                var matchedId = CardIntegration._matchButtonToPluginId(lowerLabel, lowerCls) || makeSafeId(label);
+                var matchedId = CardIntegration._matchButtonToPluginId(lowerLabel, lowerCls);
+                // Регистрируем только кнопки известных онлайн-плагинов.
+                if (!matchedId) return;
                 SourceRegistry.registerCardButtonSource({ id: matchedId, name: label });
                 var rec = { id: matchedId, name: label, element: el };
                 found.push(rec);
@@ -3332,33 +3311,42 @@
     // =========================================================================
     function startPlugin() {
         if (window.andrprod_plugin_loaded) return true;
-        try {
-            if (typeof Lampa === 'undefined' || !Lampa.Component || !Lampa.Component.add ||
-                !Lampa.Listener || !Lampa.Listener.follow || typeof $ === 'undefined') {
+        if (typeof Lampa === 'undefined' || !Lampa.Component || !Lampa.Component.add ||
+            !Lampa.Listener || !Lampa.Listener.follow || typeof $ === 'undefined') return false;
+
+        var coreReady = false;
+        function reportStep(name, fn) {
+            try {
+                fn();
+                if (window.console && console.log) console.log('[ANDRPROD] ' + name + ': OK');
+                return true;
+            } catch (stepError) {
+                if (window.console && console.error) console.error('[ANDRPROD] ' + name + ' failed:', stepError && (stepError.stack || stepError.message || stepError));
                 return false;
             }
+        }
 
-            injectStyles();
+        // Критический минимум: регистрация экранов и кнопки карточки.
+        coreReady = reportStep('register hub component', function () {
             Lampa.Component.add(HUB_COMPONENT, AndrprodHubComponent);
             Lampa.Component.add(SEARCH_COMPONENT, AndrprodSearchComponent);
-            SourceRegistry.resetAndScan();
-            SourceRegistry.discoverAllPluginSources();
-            CardIntegration.init();
-            SettingsIntegration.init();
-            addSidebarMenuItem();
+        });
+        if (!coreReady) return false;
 
-            window.andrprod_plugin_loaded = true;
-            if (window.console && console.log) console.log('[ANDRPROD] Plugin v' + PLUGIN_VERSION + ' initialized');
-            return true;
-        } catch (err) {
-            if (window.console && console.error) console.error('[ANDRPROD] Initialization failed:', err && (err.stack || err.message || err));
-            try {
-                if (Lampa && Lampa.Noty && Lampa.Noty.show) {
-                    Lampa.Noty.show('ANDRPROD: ошибка запуска. Подробности в журнале Lampa.');
-                }
-            } catch (notifyError) {}
-            return false;
-        }
+        reportStep('inject styles', injectStyles);
+        reportStep('card integration', function () { CardIntegration.init(); });
+        reportStep('settings integration', function () { SettingsIntegration.init(); });
+        reportStep('sidebar menu', addSidebarMenuItem);
+
+        // Сканирование источников не должно блокировать загрузку кнопки ANDRPROD.
+        setTimeout(function () {
+            reportStep('scan online plugins', function () { SourceRegistry.resetAndScan(); });
+            reportStep('discover plugin sources', function () { SourceRegistry.discoverAllPluginSources(); });
+        }, 0);
+
+        window.andrprod_plugin_loaded = true;
+        if (window.console && console.log) console.log('[ANDRPROD] Plugin v' + PLUGIN_VERSION + ' initialized');
+        return true;
     }
 
     // Bootstrap защищает от гонки загрузки: скрипт может прийти раньше готовности API Lampa.
