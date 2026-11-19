@@ -22,7 +22,6 @@
      */
 
     if (window.andrprod_plugin_loaded) return;
-    window.andrprod_plugin_loaded = true;
 
     var PLUGIN_ID = 'andrprod';
     var PLUGIN_VERSION = '3.0.0';
@@ -3332,7 +3331,13 @@
     // 17. ИНИЦИАЛИЗАЦИЯ ПЛАГИНА
     // =========================================================================
     function startPlugin() {
+        if (window.andrprod_plugin_loaded) return true;
         try {
+            if (typeof Lampa === 'undefined' || !Lampa.Component || !Lampa.Component.add ||
+                !Lampa.Listener || !Lampa.Listener.follow || typeof $ === 'undefined') {
+                return false;
+            }
+
             injectStyles();
             Lampa.Component.add(HUB_COMPONENT, AndrprodHubComponent);
             Lampa.Component.add(SEARCH_COMPONENT, AndrprodSearchComponent);
@@ -3341,14 +3346,44 @@
             CardIntegration.init();
             SettingsIntegration.init();
             addSidebarMenuItem();
-        } catch (err) {}
+
+            window.andrprod_plugin_loaded = true;
+            if (window.console && console.log) console.log('[ANDRPROD] Plugin v' + PLUGIN_VERSION + ' initialized');
+            return true;
+        } catch (err) {
+            if (window.console && console.error) console.error('[ANDRPROD] Initialization failed:', err && (err.stack || err.message || err));
+            try {
+                if (Lampa && Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show('ANDRPROD: ошибка запуска. Подробности в журнале Lampa.');
+                }
+            } catch (notifyError) {}
+            return false;
+        }
     }
 
-    if (window.appready) {
-        startPlugin();
-    } else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') startPlugin();
-        });
-    }
+    // Bootstrap защищает от гонки загрузки: скрипт может прийти раньше готовности API Lampa.
+    (function bootstrap() {
+        var attempts = 0;
+        var maxAttempts = 80;
+        function tryStart() {
+            if (window.andrprod_plugin_loaded) return;
+            attempts++;
+            if (startPlugin()) return;
+            if (attempts < maxAttempts) {
+                setTimeout(tryStart, 250);
+            } else if (window.console && console.error) {
+                console.error('[ANDRPROD] Lampa API did not become ready; initialization stopped.');
+            }
+        }
+        if (window.appready) tryStart();
+        else if (typeof Lampa !== 'undefined' && Lampa.Listener && Lampa.Listener.follow) {
+            Lampa.Listener.follow('app', function (e) {
+                if (e.type === 'ready') tryStart();
+            });
+            // Safety net in case the ready event happened before listener registration.
+            setTimeout(function () { if (window.appready) tryStart(); }, 1000);
+        } else {
+            tryStart();
+        }
+    })();
 })();
