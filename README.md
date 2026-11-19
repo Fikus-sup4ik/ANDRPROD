@@ -7,7 +7,7 @@
 ## 1. Установка и настройка в Lampa
 
 ### Требования к размещению файла (важно против ошибки «Не удалось проверить работоспособность плагина»)
-1. Разместите `Andrprod.js` на хостинге, который отдаёт **сырой JavaScript** с заголовками CORS — например, **GitHub Pages** (`https://<username>.github.io/<repo>/Andrprod.js`) или прямую ссылку `https://raw.githubusercontent.com/<user>/<repo>/main/Andrprod.js`.
+1. Разместите `Andrprod.js` на хостинге, который отдаёт **сырой JavaScript** с заголовками CORS — например, **GitHub Pages** (`https://Fikus-sup4ik.github.io/ANDRPROD/Andrprod.js`) или прямую ссылку `https://raw.githubusercontent.com/Fikus-sup4ik/ANDRPROD/main/Andrprod.js`.
 2. **Не используйте** HTML-ссылку вида `https://github.com/.../blob/main/Andrprod.js` — Lampa получит HTML вместо JS и выдаст ошибку проверки.
 3. Если Lampa открыта по **HTTPS**, ссылка на `Andrprod.js` также должна быть **HTTPS** (иначе браузер/WebView телевизора заблокирует загрузку из-за Mixed Content).
 
